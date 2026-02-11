@@ -63,7 +63,7 @@ Figures in SVG format.
     -   Statistical summaries will be available in `figures/Supplementary/`.
 
 ## Authors
-Develop by the NeuroEng@Usach group, Univesidad de Santiago de Chile, after the data shared by our collaborators at University of Nagoya, Japan
+Developed by the NeuroEng@Usach group, Univesidad de Santiago de Chile, after the data shared by our collaborators at University of Nagoya, Japan
 
 ## 📄 License
 This dataset and code are released under the MIT License. Please cite the accompanying publication when using this resource.
