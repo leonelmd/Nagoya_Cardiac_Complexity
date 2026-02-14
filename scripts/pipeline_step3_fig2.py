@@ -6,12 +6,7 @@ import os
 from scipy.stats import ttest_ind
 
 def add_stat_annotation(ax, x1, x2, y, h, text, color='black'):
-    """
-    Draws a bracket with text using plot coordinates.
-    x1, x2: x-coordinates of the two bars
-    y: maximum height
-    h: height of the bracket legs
-    """
+    """Draws a bracket with text using plot coordinates."""
     ax.plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=1.5, c=color)
     ax.text((x1+x2)*.5, y+h, text, ha='center', va='bottom', color=color, fontsize=12, fontweight='bold')
 
@@ -21,184 +16,152 @@ def get_sig_chars(p):
     if p < 0.05: return '*'
     return 'n.s.'
 
-def plot_illustration(ax):
-    """
-    Creates a schematic illustration of the Diurnal Amplitude metric.
-    Uses a synthetic sine wave to represent a healthy circadian rhythm.
-    """
-    t = np.linspace(0, 24, 200)
-    # Synthetic "Healthy" Curve: Peak at 14:00 (t=14), Trough at 02:00 (t=2, 26)
-    # Shifted sine: -cos((t - 14)/24 * 2pi) ? No.
-    # Simple sine centered at 0: cos(t). Peak at 0.
-    # We want peak at 14h.
-    # y = A * cos((t - 14) * 2pi / 24)
-    y = 0.5 * np.cos((t - 14) * 2 * np.pi / 24) + 1.0 # Mean 1.0, Amp 0.5
-    
-    # Plot Curve
-    ax.plot(t, y, color='#2E86AB', linewidth=3, label='Healthy Rhythm')
-    
-    # Define Windows
-    day_mask = (t >= 10) & (t <= 16)
-    night_mask = (t >= 0) & (t <= 6)
-    
-    # Calculate Means of Synthetic Data
-    day_mean = np.mean(y[day_mask])
-    night_mean = np.mean(y[night_mask]) # Note: 0-6 is correct for this 0-24 grid
-    
-    # Shade Regions
-    ax.fill_between(t, 0, 2, where=day_mask, color='#FFD700', alpha=0.3, label='Day Window (10a-4p)')
-    ax.fill_between(t, 0, 2, where=night_mask, color='#0B3D91', alpha=0.2, label='Night Window (12a-6a)')
-    
-    # Plot Mean Levels
-    ax.hlines(day_mean, 0, 24, colors='#FFD700', linestyles='--', linewidth=2)
-    ax.hlines(night_mean, 0, 24, colors='#0B3D91', linestyles='--', linewidth=2)
-    
-    # Annotation Arrow
-    # Draw arrow at t=20 (neutral zone) or t=14?
-    # Let's draw it at t=22 to be clear
-    x_arrow = 22
-    ax.annotate('', xy=(x_arrow, day_mean), xytext=(x_arrow, night_mean),
-                arrowprops=dict(arrowstyle='<->', color='black', lw=2))
-    ax.text(x_arrow + 0.5, (day_mean + night_mean)/2, 'Diurnal\nAmplitude', 
-            ha='left', va='center', fontsize=12, fontweight='bold')
-    
-    ax.text(13, day_mean + 0.1, 'Day Mean', color='#B8860B', fontweight='bold', ha='center')
-    ax.text(3, night_mean - 0.1, 'Night Mean', color='#0B3D91', fontweight='bold', ha='center')
-
-    ax.set_title('Metric Calculation: Diurnal Amplitude', fontsize=16, fontweight='bold')
-    ax.set_xlabel('Time of Day (h)')
-    ax.set_ylim(0.4, 1.6)
-    ax.set_xlim(0, 24)
-    ax.set_xticks([0, 6, 12, 18, 24])
-    ax.set_xticklabels(['12a', '6a', '12p', '6p', '12a'])
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc='upper left', fontsize=10)
+def parse_time(t_str):
+    try:
+        if pd.isna(t_str): return np.nan
+        h, m, s = map(int, str(t_str).split(':'))
+        return h + m/60.0 + s/3600.0
+    except:
+        return np.nan
 
 def generate_figure2():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     ev_path = os.path.join(base_dir, 'calculations/Full_HRV_Evolution_1min.csv')
-    day_path = os.path.join(base_dir, 'calculations/Day_Window_Stats.csv')
-    night_path = os.path.join(base_dir, 'calculations/Night_Window_Stats.csv')
-    mse_day_path = os.path.join(base_dir, 'calculations/MSE_curves_Day.csv')
-    mse_night_path = os.path.join(base_dir, 'calculations/MSE_curves_Night.csv')
-    fig_dir = os.path.join(base_dir, 'figures/Figure2')
+    metadata_path = os.path.join(base_dir, 'data/metadata/metadata.csv')
+    fig_dir = os.path.join(base_dir, 'results/plots/Figure2')
     os.makedirs(fig_dir, exist_ok=True)
     
-    colors = {'control': '#2E86AB', 'PD': '#D62828'}
+    colors = {'Control': '#2E86AB', 'PD': '#D62828'}
     sns.set_style("ticks")
     
-    fig = plt.figure(figsize=(22, 22))
-    gs = fig.add_gridspec(4, 2, hspace=0.35, wspace=0.2)
-    
-    # 1. 24h Evolution
+    # Load Data
     df_ev = pd.read_csv(ev_path)
-    df_ev['Plot_Time'] = (df_ev['Time_h'] + 12) % 24
+    df_meta = pd.read_csv(metadata_path)
     
+    # Standardize Groups
+    df_ev['Group'] = df_ev['Group'].str.lower().replace({'control': 'Control', 'pd': 'PD'})
+    df_meta['Group'] = df_meta['Group'].str.lower().replace({'control': 'Control', 'pd': 'PD'})
+    
+    # Align Subject IDs
+    if 'Subject' not in df_meta.columns:
+        if 'Subject_ID' in df_meta.columns:
+            df_meta = df_meta.rename(columns={'Subject_ID': 'Subject'})
+            
+    # Calculate Precise Clock Alignment
+    # The new Julia pipeline already aligns Time_h to absolute clock time (0=Midnight)
+    df_ev['Clock_Time'] = df_ev['Time_h']
+    
+    # Plotting Logic: Center at Midnight (12.0)
+    # 0 maps to Noon, 12 maps to Midnight, 24 maps to Noon
+    df_ev['Plot_Time'] = (df_ev['Clock_Time'] - 12) % 24
+    
+    fig = plt.figure(figsize=(24, 20))
+    gs = fig.add_gridspec(3, 2, hspace=0.4, wspace=0.25)
+    
+    # --- STAGE 1: 24h Evolution (Top 2 rows) ---
     metrics = ['HR', 'Complexity', 'SDNN', 'RMSSD']
     titles = ['Heart Rate (BPM)', 'Complexity Index (MSE 1-5)', 'SDNN (s)', 'RMSSD (s)']
     
+    labels = ['A', 'B', 'C', 'D']
     for idx, m in enumerate(metrics):
         row = idx // 2
         col = idx % 2
         ax = fig.add_subplot(gs[row, col])
-        subj_bins = df_ev.groupby(['Group', 'Subject', df_ev['Plot_Time'].round(2)])[m].mean().reset_index()
-        summary = subj_bins.groupby(['Group', 'Plot_Time'])[m].agg(['mean', 'sem']).reset_index()
+        ax.text(-0.05, 1.1, labels[idx], transform=ax.transAxes, fontsize=24, fontweight='bold', va='bottom', ha='right')
         
-        for group in ['control', 'PD']:
-            data = summary[summary['Group'] == group].sort_values('Plot_Time')
-            y_smooth = data['mean'].rolling(15, center=True).mean()
-            s_smooth = data['sem'].rolling(15, center=True).mean()
-            ax.plot(data['Plot_Time'], y_smooth, color=colors[group], linewidth=3, label=group.capitalize())
-            ax.fill_between(data['Plot_Time'], y_smooth - s_smooth, y_smooth + s_smooth, color=colors[group], alpha=0.15)
+        # Bin data for smooth plotting (coarser as requested)
+        df_ev['Bin_Time'] = df_ev['Plot_Time'].round(2)
+        subj_bins = df_ev.groupby(['Group', 'Subject', 'Bin_Time'])[m].mean().reset_index()
+        summary = subj_bins.groupby(['Group', 'Bin_Time'])[m].agg(['mean', 'sem']).reset_index()
+        
+        for group in ['Control', 'PD']:
+            data = summary[summary['Group'] == group].sort_values('Bin_Time')
+            y_smooth = data['mean'].rolling(15, center=True, min_periods=1).mean()
+            s_smooth = data['sem'].rolling(15, center=True, min_periods=1).mean()
+            ax.plot(data['Bin_Time'], y_smooth, color=colors[group], linewidth=3, label=group)
+            ax.fill_between(data['Bin_Time'], y_smooth - s_smooth, y_smooth + s_smooth, color=colors[group], alpha=0.15)
             
-        ax.set_title(titles[idx], fontsize=16, fontweight='bold')
-        ax.set_xticks(np.arange(0, 25, 3))
-        ax.set_xticklabels(['12 PM', '3 PM', '6 PM', '9 PM', '12 AM', '3 AM', '6 AM', '9 AM', '12 PM'])
+        ax.set_title(titles[idx], fontsize=18, fontweight='bold')
+        ax.set_xlim(0, 24)
+        ax.set_xticks([0, 6, 12, 18, 24])
+        ax.set_xticklabels(['12 PM', '6 PM', '12 AM', '6 AM', '12 PM'])
         ax.axvline(12, color='black', linestyle='--', alpha=0.3)
-        if idx == 0: ax.legend()
+        ax.grid(True, alpha=0.2)
+        if idx == 0: ax.legend(loc='upper right', fontsize=12)
 
-    # 2. Methodology & MSE Curves (Middle Row)
-    # Left: Illustration
-    ax_ill = fig.add_subplot(gs[2, 0])
-    plot_illustration(ax_ill)
+    # --- STAGE 2: Exhaustive Heatmap (Bottom Left) ---
+    print("Generating Heatmap...")
+    win_len = 4
+    win_data = {}
+    for start_h in range(24):
+        end_h = start_h + win_len
+        if end_h > 24:
+            mask = (df_ev['Clock_Time'] >= start_h) | (df_ev['Clock_Time'] < (end_h % 24))
+        else:
+            mask = (df_ev['Clock_Time'] >= start_h) & (df_ev['Clock_Time'] < end_h)
+        label = f"{start_h:02d}"
+        win_data[label] = df_ev[mask].groupby(['Group', 'Subject'])['Complexity'].mean().reset_index()
     
-    # Right: MSE Curves (Combined Day/Night)
-    if os.path.exists(mse_day_path) and os.path.exists(mse_night_path):
-        mse_day = pd.read_csv(mse_day_path)
-        mse_night = pd.read_csv(mse_night_path)
-        
-        ax_mse = fig.add_subplot(gs[2, 1])
-        
-        # Plot Day (Solid)
-        sns.lineplot(data=mse_day, x='Scales', y='MSE', hue='Group', palette=colors, ax=ax_mse, 
-                     errorbar=None, linewidth=2.5, hue_order=['control', 'PD'])
-        
-        # Plot Night (Dashed) - We need to manually handle this to avoid hue confusion or use style
-        # Easy hack: Plot manually loop
-        # Or just plot Day here and maybe Night in supplement? 
-        # User asked for "MSE Curves for Day and Night" in step 0. 
-        # Let's try to overlay them with styles.
-        
-        # Overlay Night with dashed lines
-        for g in ['control', 'PD']:
-            dat = mse_night[mse_night['Group'] == g]
-            # Aggregate mean for simple plotting if seaborn gives trouble with style+hue
-            # Let's use seaborn but specify style
-            pass
+    all_pairs = []
+    labels_h = list(win_data.keys())
+    for i in range(len(labels_h)):
+        for j in range(len(labels_h)):
+            if i == j: continue
+            df1, df2 = win_data[labels_h[i]], win_data[labels_h[j]]
+            df_pair = pd.merge(df1, df2, on=['Subject', 'Group'], suffixes=('_1', '_2'))
+            df_pair['Delta'] = df_pair['Complexity_1'] - df_pair['Complexity_2']
+            c = df_pair[df_pair['Group'] == 'Control']['Delta'].dropna()
+            pd_vals = df_pair[df_pair['Group'] == 'PD']['Delta'].dropna()
+            if len(c) > 10 and len(pd_vals) > 10:
+                t, pval = ttest_ind(c, pd_vals)
+                all_pairs.append({'W1': labels_h[i], 'W2': labels_h[j], 'LogP': -np.log10(pval)})
+    
+    df_h = pd.DataFrame(all_pairs)
+    pivot = df_h.pivot(index='W1', columns='W2', values='LogP')
+    
+    ax_heat = fig.add_subplot(gs[2, 0])
+    ax_heat.text(-0.05, 1.1, 'E', transform=ax_heat.transAxes, fontsize=24, fontweight='bold', va='bottom', ha='right')
+    sns.heatmap(pivot, cmap='Spectral_r', ax=ax_heat, cbar_kws={'label': '-log10(p)'})
+    ax_heat.set_title(f'Exhaustive Search: Complexity Delta ({win_len}h Windows)', fontsize=18, fontweight='bold')
+    ax_heat.set_xlabel('Reference Window (Start Hour)')
+    ax_heat.set_ylabel('Comparison Window (Start Hour)')
 
-        # Re-doing with style
-        mse_day['Period'] = 'Day'
-        mse_night['Period'] = 'Night'
-        mse_all = pd.concat([mse_day, mse_night])
-        
-        sns.lineplot(data=mse_all, x='Scales', y='MSE', hue='Group', style='Period', palette=colors, ax=ax_mse,
-                     linewidth=2, hue_order=['control', 'PD'], style_order=['Day', 'Night'])
-        
-        ax_mse.set_title('MSE Curves: Day (Solid) vs Night (Dashed)', fontsize=16, fontweight='bold')
-        ax_mse.grid(True, alpha=0.2)
-        ax_mse.legend(loc='upper right', fontsize=10)
+    # --- STAGE 3: Best Delta Boxplot (Bottom Right) ---
+    # Using 07:00-11:00 vs 13:00-17:00
+    w1_start, w2_start = 7, 13
+    df_w1 = win_data[f"{w1_start:02d}"]
+    df_w2 = win_data[f"{w2_start:02d}"]
+    df_final = pd.merge(df_w1, df_w2, on=['Subject', 'Group'], suffixes=('_Morning', '_Afternoon'))
+    df_final['Delta'] = df_final['Complexity_Morning'] - df_final['Complexity_Afternoon']
+    
+    ax_box = fig.add_subplot(gs[2, 1])
+    ax_box.text(-0.05, 1.1, 'F', transform=ax_box.transAxes, fontsize=24, fontweight='bold', va='bottom', ha='right')
+    
+    sns.boxplot(x='Group', y='Delta', data=df_final, palette=colors, ax=ax_box, width=0.5, showfliers=False, order=['Control', 'PD'])
+    sns.stripplot(x='Group', y='Delta', data=df_final, palette=colors, ax=ax_box, dodge=False, alpha=0.6, color='black', order=['Control', 'PD'])
+    
+    c_vals = df_final[df_final['Group'] == 'Control']['Delta']
+    p_vals = df_final[df_final['Group'] == 'PD']['Delta']
+    t, pval = ttest_ind(c_vals, p_vals)
+    
+    y_max = df_final['Delta'].max()
+    y_min = df_final['Delta'].min()
+    dist = y_max - y_min
+    add_stat_annotation(ax_box, 0, 1, y_max + dist*0.05, dist*0.05, f'p = {pval:.4f} {get_sig_chars(pval)}')
+    
+    ax_box.set_title('Best Biomarker: Morning vs. Afternoon Delta', fontsize=18, fontweight='bold')
+    ax_box.set_ylabel(r'$\Delta$ Complexity (07-11 vs. 13-17)', fontsize=14)
+    ax_box.set_xlabel('')
+    ax_box.set_ylim(y_min - dist*0.1, y_max + dist*0.25)
+    ax_box.axhline(0, color='black', linestyle='--', alpha=0.3)
+    sns.despine(ax=ax_box)
 
-    # 3. Circadian Amplitude Analysis (Bottom Row)
-    # Use sub-gridspec for 4 columns
-    gs_bottom = gs[3, :].subgridspec(1, 4, wspace=0.4)
+    plt.suptitle("Figure 2: Circadian Fractal Dynamics and Biomarker Discovery", fontsize=28, fontweight='bold', y=0.98)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
     
-    df_day = pd.read_csv(day_path)
-    df_night = pd.read_csv(night_path)
-    df_m = pd.merge(df_day, df_night, on=['Group', 'Subject'], suffixes=('_Day', '_Night'))
-    
-    amp_metrics = ['HR', 'Complexity', 'SDNN', 'RMSSD']
-    amp_titles = ['HR', 'Complexity', 'SDNN', 'RMSSD']
-    
-    for idx, m in enumerate(amp_metrics):
-        # Calculate Difference
-        df_m[f'{m}_Amp'] = df_m[f'{m}_Day'] - df_m[f'{m}_Night']
-        
-        ax = fig.add_subplot(gs_bottom[0, idx])
-        
-        sns.boxplot(x='Group', y=f'{m}_Amp', data=df_m, palette=colors, ax=ax, width=0.5, showfliers=False, order=['control', 'PD'])
-        sns.stripplot(x='Group', y=f'{m}_Amp', data=df_m, palette=colors, ax=ax, dodge=False, alpha=0.6, color='black', edgecolor='white', linewidth=0.5, order=['control', 'PD'])
-        
-        # Stats
-        c = df_m[df_m['Group'] == 'control'][f'{m}_Amp'].dropna()
-        p_vals = df_m[df_m['Group'] == 'PD'][f'{m}_Amp'].dropna()
-        t, pval = ttest_ind(c, p_vals)
-        
-        y_max = df_m[f'{m}_Amp'].max()
-        y_min = df_m[f'{m}_Amp'].min()
-        h = (y_max - y_min) * 0.1
-        if h == 0: h = 1.0
-        
-        add_stat_annotation(ax, 0, 1, y_max + h, h*0.5, get_sig_chars(pval))
-        
-        ax.set_title(f'Δ {amp_titles[idx]}', fontsize=14, fontweight='bold')
-        if idx == 0: ax.set_ylabel('Amplitude (Day - Night)', fontsize=12)
-        else: ax.set_ylabel('')
-        ax.set_xlabel('')
-        ax.axhline(0, linestyle='--', color='gray', alpha=0.5)
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(fig_dir, 'Figure2.svg'), format='svg')
-    print(f"Figure 2 saved to {fig_dir}")
+    out_path = os.path.join(fig_dir, 'Figure2.png')
+    plt.savefig(out_path, dpi=300)
+    print(f"Figure 2 updated and saved to {out_path}")
 
 if __name__ == "__main__":
     generate_figure2()
